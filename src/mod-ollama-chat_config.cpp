@@ -1,6 +1,8 @@
 #include "mod-ollama-chat_config.h"
 #include "mod-ollama-chat_sentiment.h"
 #include "mod-ollama-chat_rag.h"
+#include "mod-ollama-chat_newsfeed.h"
+#include "mod-ollama-chat_journal.h"
 #include "Config.h"
 #include "Log.h"
 #include "mod-ollama-chat_api.h"
@@ -104,6 +106,11 @@ std::unordered_map<std::string, std::string> g_PersonalityPrompts;
 std::vector<std::string> g_PersonalityKeys;
 std::vector<std::string> g_PersonalityKeysRandomOnly;
 std::string g_DefaultPersonalityPrompt;
+
+// Named-character personalities
+bool        g_EnableNamedCharacters = true;
+std::string g_NamedCharactersFile   = "../../../modules/mod-ollama-chat/data/characters.json";
+std::unordered_map<std::string, std::string> g_NamedCharacterByName;
 
 // --------------------------------------------
 // Chat History Templates and Toggles
@@ -278,6 +285,51 @@ bool g_EnableTypingSimulation = false;
 uint32_t g_TypingSimulationBaseDelay = 1000;     // 1000ms base delay
 uint32_t g_TypingSimulationDelayPerChar = 250;   // 250ms per character (4 chars/sec)
 
+// --------------------------------------------
+// NewsFeed (Phase 2)
+// --------------------------------------------
+bool        g_EnableNewsFeed            = false;
+std::string g_NewsFeedUrl               = "https://rss.dw.com/rdf/rss-ru-all";
+uint32_t    g_NewsFeedRefreshInterval   = 30;
+uint32_t    g_NewsFeedMaxItems          = 20;
+uint32_t    g_NewsFeedDailyTopicCount   = 5;
+uint32_t    g_NewsFeedCommentChance     = 10;
+std::string g_NewsFeedCommentTemplate   = "Слышал новость: {headline}. Что думаешь об этом?";
+std::vector<std::string> g_NewsFeedBlockedKeywords;
+
+// --------------------------------------------
+// Extended Daily Journal (named bots)
+// --------------------------------------------
+bool        g_EnableExtendedMemory              = false;
+std::unordered_set<std::string> g_ExtendedMemoryBotsSet;
+std::unordered_set<uint32_t> g_ExtendedMemoryBotGuids;
+std::string g_ExtendedMemoryGuildName           = "";
+uint32_t    g_ExtendedMemoryGuildId             = 0;
+uint32_t    g_ExtendedMemoryRetentionDays        = 7;
+uint32_t    g_ExtendedMemoryMaxEntriesPerDay     = 20;
+uint32_t    g_ExtendedMemoryDaysInPrompt         = 2;
+uint32_t    g_ExtendedMemorySaveInterval         = 10;
+std::string g_BotJournalPromptTemplate           = "Твой дневник за последние дни: {journal_digest}";
+time_t      g_LastJournalSaveTime                = 0;
+
+// --------------------------------------------
+// Long-Term Memory (Phase 3)
+// --------------------------------------------
+bool        g_EnableLongTermMemory         = false;
+uint32_t    g_MemorySummaryEveryNMessages  = 10;
+std::string g_OllamaMemoryModel            = "";
+bool        g_MemorySummaryThinkMode       = false;
+uint32_t    g_MemorySummaryNumPredict      = 512;
+std::string g_MemorySummaryPrompt          =
+    "Ниже история общения между {bot_name} и игроком {player_name}. "
+    "Кратко, в 2-3 предложениях на русском, опиши что {bot_name} помнит об этом игроке: "
+    "факты, отношения, прошлые события. "
+    "Выведи ТОЛЬКО текст памяти, без кавычек и пояснений.\n\n{history}";
+std::string g_BotMemoryPromptTemplate      = "Что ты помнишь об этом игроке: {bot_memory}";
+
+std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::string>> g_BotMemoryCache;
+std::mutex g_BotMemoryMutex;
+
 
 static std::vector<std::string> SplitString(const std::string& str, char delim)
 {
@@ -299,7 +351,7 @@ static std::vector<std::string> SplitString(const std::string& str, char delim)
 void LoadBotPersonalityList()
 {    
     // Let's make sure our user has sourced the required sql file to add the new table
-    QueryResult tableExists = CharacterDatabase.Query("SELECT * FROM information_schema.tables WHERE table_schema = 'acore_characters' AND table_name = 'mod_ollama_chat_personality' LIMIT 1");
+    QueryResult tableExists = CharacterDatabase.Query("SELECT * FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'mod_ollama_chat_personality' LIMIT 1");
     if (!tableExists)
     {
         LOG_ERROR("server.loading", "[Ollama Chat] Please source the required database table first");
@@ -422,6 +474,8 @@ void LoadOllamaChatConfig()
     g_EventChatterMaxBotsPerPlayer   = sConfigMgr->GetOption<uint32_t>("OllamaChat.EventChatterMaxBotsPerPlayer", 2);
 
     g_EnableRPPersonalities           = sConfigMgr->GetOption<bool>("OllamaChat.EnableRPPersonalities", false);
+    g_EnableNamedCharacters           = sConfigMgr->GetOption<bool>("OllamaChat.EnableNamedCharacters", true);
+    g_NamedCharactersFile             = sConfigMgr->GetOption<std::string>("OllamaChat.NamedCharactersFile", "../../../modules/mod-ollama-chat/data/characters.json");
 
     g_RandomChatterPromptTemplate     = sConfigMgr->GetOption<std::string>("OllamaChat.RandomChatterPromptTemplate", "");
 
@@ -498,6 +552,80 @@ void LoadOllamaChatConfig()
     g_EnableTypingSimulation          = sConfigMgr->GetOption<bool>("OllamaChat.EnableTypingSimulation", false);
     g_TypingSimulationBaseDelay       = sConfigMgr->GetOption<uint32_t>("OllamaChat.TypingSimulationBaseDelay", 1000);
     g_TypingSimulationDelayPerChar    = sConfigMgr->GetOption<uint32_t>("OllamaChat.TypingSimulationDelayPerChar", 250);
+
+    // NewsFeed (Phase 2)
+    g_EnableNewsFeed                  = sConfigMgr->GetOption<bool>("OllamaChat.EnableNewsFeed", false);
+    g_NewsFeedUrl                     = sConfigMgr->GetOption<std::string>("OllamaChat.NewsFeedUrl", "https://rss.dw.com/rdf/rss-ru-all");
+    g_NewsFeedRefreshInterval         = sConfigMgr->GetOption<uint32_t>("OllamaChat.NewsFeedRefreshInterval", 30);
+    g_NewsFeedMaxItems                = sConfigMgr->GetOption<uint32_t>("OllamaChat.NewsFeedMaxItems", 20);
+    g_NewsFeedCommentChance           = sConfigMgr->GetOption<uint32_t>("OllamaChat.NewsFeedCommentChance", 10);
+    g_NewsFeedCommentTemplate         = sConfigMgr->GetOption<std::string>("OllamaChat.NewsFeedCommentTemplate",
+        "Слышал новость: {headline}. Что думаешь об этом?");
+
+    // Parse blocked keywords (comma-separated, stored lowercase for matching)
+    g_NewsFeedBlockedKeywords.clear();
+    {
+        std::string blockedRaw = sConfigMgr->GetOption<std::string>("OllamaChat.NewsFeedBlockedKeywords", "");
+        if (!blockedRaw.empty())
+        {
+            std::vector<std::string> tokens = SplitString(blockedRaw, ',');
+            for (const auto& tok : tokens)
+            {
+                std::string lower = tok;
+                for (char& c : lower)
+                    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + ('a' - 'A'));
+                if (!lower.empty())
+                    g_NewsFeedBlockedKeywords.push_back(lower);
+            }
+        }
+    }
+
+    // NewsFeed: daily topic count
+    g_NewsFeedDailyTopicCount     = sConfigMgr->GetOption<uint32_t>("OllamaChat.NewsFeedDailyTopicCount", 5);
+
+    // Extended Daily Journal
+    g_EnableExtendedMemory = sConfigMgr->GetOption<bool>("OllamaChat.EnableExtendedMemory", false);
+    {
+        std::string botsRaw = sConfigMgr->GetOption<std::string>("OllamaChat.ExtendedMemoryBots", "");
+        g_ExtendedMemoryBotsSet.clear();
+        g_ExtendedMemoryBotGuids.clear();
+        if (!botsRaw.empty())
+        {
+            std::vector<std::string> names = SplitString(botsRaw, ',');
+            for (const auto& n : names)
+            {
+                if (n.empty())
+                    continue;
+                // All-digit token = character GUID; otherwise a character name
+                if (n.find_first_not_of("0123456789") == std::string::npos)
+                    g_ExtendedMemoryBotGuids.insert(static_cast<uint32_t>(std::stoul(n)));
+                else
+                    g_ExtendedMemoryBotsSet.insert(n);
+            }
+        }
+    }
+    g_ExtendedMemoryGuildName        = sConfigMgr->GetOption<std::string>("OllamaChat.ExtendedMemoryGuildName", "");
+    g_ExtendedMemoryGuildId          = sConfigMgr->GetOption<uint32_t>("OllamaChat.ExtendedMemoryGuildId", 0); // if 0, resolved from name in OnStartup
+    g_ExtendedMemoryRetentionDays    = sConfigMgr->GetOption<uint32_t>("OllamaChat.ExtendedMemoryRetentionDays", 7);
+    g_ExtendedMemoryMaxEntriesPerDay = sConfigMgr->GetOption<uint32_t>("OllamaChat.ExtendedMemoryMaxEntriesPerDay", 20);
+    g_ExtendedMemoryDaysInPrompt     = sConfigMgr->GetOption<uint32_t>("OllamaChat.ExtendedMemoryDaysInPrompt", 2);
+    g_ExtendedMemorySaveInterval     = sConfigMgr->GetOption<uint32_t>("OllamaChat.ExtendedMemorySaveInterval", 10);
+    g_BotJournalPromptTemplate       = sConfigMgr->GetOption<std::string>("OllamaChat.BotJournalPromptTemplate",
+        "Твой дневник за последние дни: {journal_digest}");
+
+    // Long-Term Memory (Phase 3)
+    g_EnableLongTermMemory        = sConfigMgr->GetOption<bool>("OllamaChat.EnableLongTermMemory", false);
+    g_MemorySummaryEveryNMessages = sConfigMgr->GetOption<uint32_t>("OllamaChat.MemorySummaryEveryNMessages", 10);
+    g_OllamaMemoryModel           = sConfigMgr->GetOption<std::string>("OllamaChat.MemorySummaryModel", "");
+    g_MemorySummaryThinkMode      = sConfigMgr->GetOption<bool>("OllamaChat.MemorySummaryThinkMode", false);
+    g_MemorySummaryNumPredict     = sConfigMgr->GetOption<uint32_t>("OllamaChat.MemorySummaryNumPredict", 512);
+    g_MemorySummaryPrompt         = sConfigMgr->GetOption<std::string>("OllamaChat.MemorySummaryPrompt",
+        "Ниже история общения между {bot_name} и игроком {player_name}. "
+        "Кратко, в 2-3 предложениях на русском, опиши что {bot_name} помнит об этом игроке: "
+        "факты, отношения, прошлые события. "
+        "Выведи ТОЛЬКО текст памяти, без кавычек и пояснений.\n\n{history}");
+    g_BotMemoryPromptTemplate     = sConfigMgr->GetOption<std::string>("OllamaChat.BotMemoryPromptTemplate",
+        "Что ты помнишь об этом игроке: {bot_memory}");
 
     g_EventTypeDefeated           = sConfigMgr->GetOption<std::string>("OllamaChat.EventTypeDefeated", "");
     g_EventTypeDefeatedPlayer     = sConfigMgr->GetOption<std::string>("OllamaChat.EventTypeDefeatedPlayer", "");
@@ -647,6 +775,66 @@ void LoadOllamaChatConfig()
              g_RandomChatterBotCommentChance, g_MaxConcurrentQueries, extraBlacklist);
 }
 
+void LoadNamedCharactersFromFile()
+{
+    g_NamedCharacterByName.clear();
+
+    if (!g_EnableNamedCharacters)
+    {
+        LOG_INFO("server.loading", "[Ollama Chat] Named characters disabled, skipping file load.");
+        return;
+    }
+
+    if (g_NamedCharactersFile.empty())
+    {
+        LOG_WARN("server.loading", "[Ollama Chat] NamedCharactersFile path is empty, skipping.");
+        return;
+    }
+
+    std::ifstream file(g_NamedCharactersFile);
+    if (!file.is_open())
+    {
+        LOG_WARN("server.loading", "[Ollama Chat] Cannot open NamedCharactersFile: {}", g_NamedCharactersFile);
+        return;
+    }
+
+    try
+    {
+        nlohmann::json jsonData;
+        file >> jsonData;
+
+        if (!jsonData.is_array())
+        {
+            LOG_WARN("server.loading", "[Ollama Chat] NamedCharactersFile must contain a JSON array: {}", g_NamedCharactersFile);
+            return;
+        }
+
+        uint32_t loaded = 0;
+        for (const auto& item : jsonData)
+        {
+            std::string name   = item.value("name", "");
+            std::string prompt = item.value("prompt", "");
+
+            if (name.empty() || prompt.empty())
+            {
+                LOG_WARN("server.loading", "[Ollama Chat] Named character entry missing 'name' or 'prompt', skipping.");
+                continue;
+            }
+
+            std::string key = "named:" + name;
+            g_PersonalityPrompts[key]     = prompt;
+            g_NamedCharacterByName[name]  = key;
+            loaded++;
+        }
+
+        LOG_INFO("server.loading", "[Ollama Chat] Loaded {} named character personalities from {}.", loaded, g_NamedCharactersFile);
+    }
+    catch (const std::exception& e)
+    {
+        LOG_WARN("server.loading", "[Ollama Chat] Error parsing NamedCharactersFile {}: {}", g_NamedCharactersFile, e.what());
+    }
+}
+
 void LoadPersonalityTemplatesFromDB()
 {
     g_PersonalityPrompts.clear();
@@ -709,6 +897,40 @@ void LoadBotConversationHistoryFromDB()
 }
 
 
+void LoadBotMemoryFromDB()
+{
+    // Guard: table may not exist yet (migrated separately)
+    QueryResult tableExists = CharacterDatabase.Query(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = DATABASE() "
+        "AND table_name = 'mod_ollama_chat_memory' LIMIT 1");
+    if (!tableExists)
+    {
+        LOG_WARN("server.loading", "[Ollama Chat] mod_ollama_chat_memory table not found - long-term memory disabled until migration is applied.");
+        return;
+    }
+
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT bot_guid, player_guid, memory_blob FROM mod_ollama_chat_memory");
+    if (!result)
+        return;
+
+    std::lock_guard<std::mutex> lock(g_BotMemoryMutex);
+    g_BotMemoryCache.clear();
+
+    uint32_t count = 0;
+    do {
+        uint64_t botGuid    = (*result)[0].Get<uint64_t>();
+        uint64_t playerGuid = (*result)[1].Get<uint64_t>();
+        std::string blob    = (*result)[2].Get<std::string>();
+
+        g_BotMemoryCache[botGuid][playerGuid] = blob;
+        ++count;
+    } while (result->NextRow());
+
+    LOG_INFO("server.loading", "[Ollama Chat] Loaded {} long-term memory entries from DB.", count);
+}
+
 // Definition of the configuration WorldScript.
 OllamaChatConfigWorldScript::OllamaChatConfigWorldScript() : WorldScript("OllamaChatConfigWorldScript") { }
 
@@ -716,8 +938,13 @@ void OllamaChatConfigWorldScript::OnStartup()
 {
     LoadOllamaChatConfig();
     LoadBotPersonalityList();
+    LoadNamedCharactersFromFile();
     LoadBotConversationHistoryFromDB();
     InitializeSentimentTracking();
+
+    // Long-Term Memory (Phase 3)
+    if (g_EnableLongTermMemory)
+        LoadBotMemoryFromDB();
 
     // Initialize RAG system if enabled
     if (g_EnableRAG) {
@@ -733,6 +960,69 @@ void OllamaChatConfigWorldScript::OnStartup()
             LOG_INFO("server.loading", "[Ollama Chat] RAG system initialized successfully");
         }
     }
+
+    // Initialize NewsFeed manager if enabled (Phase 2)
+    if (g_EnableNewsFeed)
+    {
+        if (g_NewsFeedManager)
+        {
+            delete g_NewsFeedManager;
+            g_NewsFeedManager = nullptr;
+        }
+        g_NewsFeedManager = new OllamaNewsFeedManager();
+        LOG_INFO("server.loading", "[Ollama Chat NewsFeed] Manager created, scheduling initial fetch from {}",
+                 g_NewsFeedUrl);
+        g_NewsFeedManager->FetchNewsAsync();
+    }
+
+    // Extended Daily Journal
+    if (g_EnableExtendedMemory)
+    {
+        // Guild id may be set directly via config (ExtendedMemoryGuildId);
+        // otherwise resolve the guild name to an id from CharacterDatabase.
+        if (g_ExtendedMemoryGuildId != 0)
+        {
+            LOG_INFO("server.loading",
+                "[Ollama Journal] Extended memory using configured guild id {}.",
+                g_ExtendedMemoryGuildId);
+        }
+        else if (!g_ExtendedMemoryGuildName.empty())
+        {
+            std::string escapedName = g_ExtendedMemoryGuildName;
+            CharacterDatabase.EscapeString(escapedName);
+            QueryResult guildResult = CharacterDatabase.Query(
+                "SELECT guildid FROM guild WHERE name = '{}' LIMIT 1", escapedName);
+            if (guildResult)
+            {
+                g_ExtendedMemoryGuildId = (*guildResult)[0].Get<uint32_t>();
+                LOG_INFO("server.loading",
+                    "[Ollama Journal] Extended memory guild '{}' resolved to id {}.",
+                    g_ExtendedMemoryGuildName, g_ExtendedMemoryGuildId);
+            }
+            else
+            {
+                LOG_WARN("server.loading",
+                    "[Ollama Journal] Extended memory guild '{}' not found in DB - guild journal disabled.",
+                    g_ExtendedMemoryGuildName);
+            }
+        }
+
+        if (g_BotJournal)
+        {
+            delete g_BotJournal;
+            g_BotJournal = nullptr;
+        }
+        g_BotJournal = new OllamaBotJournal();
+        g_BotJournal->LoadFromDB();
+        g_LastJournalSaveTime = time(nullptr);
+
+        std::string guildSuffix = g_ExtendedMemoryGuildId
+            ? fmt::format(" + guild id {}", g_ExtendedMemoryGuildId)
+            : std::string("");
+        LOG_INFO("server.loading",
+            "[Ollama Journal] Extended memory journal enabled for {} name(s), {} guid(s){}.",
+            g_ExtendedMemoryBotsSet.size(), g_ExtendedMemoryBotGuids.size(), guildSuffix);
+    }
 }
 
 void OllamaChatConfigWorldScript::OnShutdown()
@@ -742,5 +1032,21 @@ void OllamaChatConfigWorldScript::OnShutdown()
         delete g_RAGSystem;
         g_RAGSystem = nullptr;
         LOG_INFO("server.loading", "[Ollama Chat] RAG system cleaned up");
+    }
+
+    // Clean up NewsFeed manager
+    if (g_NewsFeedManager) {
+        delete g_NewsFeedManager;
+        g_NewsFeedManager = nullptr;
+        LOG_INFO("server.loading", "[Ollama Chat NewsFeed] Manager cleaned up");
+    }
+
+    // Final journal save and cleanup
+    if (g_BotJournal)
+    {
+        g_BotJournal->SaveToDB();
+        delete g_BotJournal;
+        g_BotJournal = nullptr;
+        LOG_INFO("server.loading", "[Ollama Journal] Journal saved and cleaned up on shutdown.");
     }
 }

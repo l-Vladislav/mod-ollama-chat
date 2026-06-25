@@ -5,7 +5,15 @@
 #include <future>
 #include "mod-ollama-chat_querymanager.h"
 
-std::string QueryOllamaAPI(const std::string& prompt);
+// modelOverride:      if non-empty, overrides g_OllamaModel for this call.
+// rawResponse:        if true, skips ExtractTextBetweenDoubleQuotes (needed for multi-sentence summaries).
+// thinkMode:          -1 = use global g_ThinkModeEnableForModule, 0 = force off, 1 = force on.
+// numPredictOverride: -1 = use g_OllamaNumPredict, 0 = unlimited (omit field), >0 = use this value.
+std::string QueryOllamaAPI(const std::string& prompt,
+                           const std::string& modelOverride = "",
+                           bool rawResponse = false,
+                           int thinkMode = -1,
+                           int numPredictOverride = -1);
 
 // Checks if an API response is valid (not an error message)
 bool IsValidAPIResponse(const std::string& response);

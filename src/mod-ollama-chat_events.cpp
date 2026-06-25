@@ -5,6 +5,7 @@
 #include "mod-ollama-chat-utilities.h"
 #include "mod-ollama-chat_personality.h"
 #include "mod-ollama-chat_sentiment.h"
+#include "mod-ollama-chat_journal.h"
 #include "Player.h"
 #include "ObjectAccessor.h"
 #include "Guild.h"
@@ -482,6 +483,9 @@ void ChatOnKill::OnPlayerCreatureKill(Player* killer, Creature* victim)
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(killer))
+        g_BotJournal->RecordEvent(killer->GetName(),
+            SafeFormat("убил {}", victim->GetName()));
     eventChatter.DispatchGameEvent(killer, g_EventTypeDefeated, victim->GetName());
 }
 
@@ -491,6 +495,9 @@ void ChatOnKill::OnPlayerPVPKill(Player* killer, Player* killed)
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(killer))
+        g_BotJournal->RecordEvent(killer->GetName(),
+            SafeFormat("победил игрока {}", killed->GetName()));
     eventChatter.DispatchGameEvent(killer, g_EventTypeDefeatedPlayer, killed->GetName());
 }
 
@@ -513,6 +520,9 @@ void ChatOnLoot::OnPlayerStoreNewItem(Player* player, Item* item, uint32 /*count
     }
     if (item->GetTemplate()->Quality >= ITEM_QUALITY_UNCOMMON)
     {
+        if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(player))
+            g_BotJournal->RecordEvent(player->GetName(),
+                SafeFormat("получил {}", item->GetTemplate()->Name1));
         eventChatter.DispatchGameEvent(player, g_EventTypeGotItem, item->GetTemplate()->Name1);
     }
     
@@ -543,6 +553,8 @@ void ChatOnDeath::OnPlayerJustDied(Player* player)
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(player))
+        g_BotJournal->RecordEvent(player->GetName(), "погиб");
     eventChatter.DispatchGameEvent(player, g_EventTypeDied, "");
 }
 
@@ -554,6 +566,9 @@ void ChatOnQuest::OnPlayerCompleteQuest(Player* player, Quest const* quest)
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(player))
+        g_BotJournal->RecordEvent(player->GetName(),
+            SafeFormat("выполнил квест {}", quest->GetTitle()));
     eventChatter.DispatchGameEvent(player, g_EventTypeCompletedQuest, quest->GetTitle());
     
     // Guild-specific dungeon completion events
@@ -624,6 +639,9 @@ void ChatOnLevelUp::OnPlayerLevelChanged(Player* player, uint8 /*oldLevel*/)
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(player))
+        g_BotJournal->RecordEvent(player->GetName(),
+            SafeFormat("достиг {} уровня", player->GetLevel()));
     eventChatter.DispatchGameEvent(player, g_EventTypeLeveledUp, std::to_string(player->GetLevel()));
     
     // Guild-specific level up events
@@ -642,6 +660,9 @@ void ChatOnAchievement::OnPlayerCompleteAchievement(Player* player, AchievementE
     {
         return;
     }
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(player))
+        g_BotJournal->RecordEvent(player->GetName(),
+            SafeFormat("получил достижение {}", achievement->name[0]));
     eventChatter.DispatchGameEvent(player, g_EventTypeAchievement, achievement->name[0]);
 
     // Guild-specific achievement event for real players only

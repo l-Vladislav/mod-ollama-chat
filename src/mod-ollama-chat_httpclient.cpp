@@ -156,6 +156,101 @@ std::string OllamaHttpClient::Post(const std::string& url, const std::string& js
     }
 }
 
+std::string OllamaHttpClient::Get(const std::string& url)
+{
+    try
+    {
+        // Parse URL to extract scheme, host, port, path
+        std::regex urlRegex(R"(^(https?)://([^:/]+)(?::(\d+))?(/.*)?$)");
+        std::smatch match;
+
+        if (!std::regex_match(url, match, urlRegex))
+        {
+            LOG_INFO("server.loading", "[Ollama Chat] Invalid URL format for GET: {}", url);
+            return "";
+        }
+
+        std::string protocol = match[1].str();
+        std::string host     = match[2].str();
+        int port = 80;
+        if (match[3].matched)
+        {
+            port = std::stoi(match[3].str());
+        }
+        else if (protocol == "https")
+        {
+            port = 443;
+        }
+        else
+        {
+            port = 80;
+        }
+
+        std::string path = match[4].matched ? match[4].str() : "/";
+
+        if (g_DebugEnabled)
+        {
+            LOG_INFO("server.loading", "[Ollama Chat] HTTP GET - Protocol: {}, Host: {}, Port: {}, Path: {}",
+                protocol, host, port, path);
+        }
+
+        httplib::Headers headers = {
+            {"User-Agent", "AzerothCore-OllamaChat/1.0"},
+            {"Accept", "application/rss+xml, application/atom+xml, text/xml, */*"}
+        };
+
+        httplib::Result response;
+
+        if (protocol == "https")
+        {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+            httplib::SSLClient sslClient(host, port);
+            sslClient.enable_server_certificate_verification(false);
+            sslClient.set_connection_timeout(m_timeout);
+            sslClient.set_read_timeout(m_timeout);
+            sslClient.set_write_timeout(m_timeout);
+            response = sslClient.Get(path, headers);
+#else
+            LOG_ERROR("server.loading", "[Ollama Chat] HTTPS GET requested but SSL support not available.");
+            return "";
+#endif
+        }
+        else
+        {
+            httplib::Client client(host, port);
+            client.set_connection_timeout(m_timeout);
+            client.set_read_timeout(m_timeout);
+            client.set_write_timeout(m_timeout);
+            response = client.Get(path, headers);
+        }
+
+        if (!response)
+        {
+            LOG_ERROR("server.loading", "[Ollama Chat] HTTP GET failed - no response from {}:{}{}", host, port, path);
+            return "";
+        }
+
+        if (response->status != 200)
+        {
+            LOG_ERROR("server.loading", "[Ollama Chat] HTTP GET failed with status: {} for {}:{}{}",
+                response->status, host, port, path);
+            return "";
+        }
+
+        if (g_DebugEnabled)
+        {
+            LOG_INFO("server.loading", "[Ollama Chat] HTTP GET successful, response length: {}", response->body.length());
+        }
+
+        return response->body;
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("server.loading", "[Ollama Chat] HTTP GET exception: {}", e.what());
+        return "";
+    }
+}
+
 void OllamaHttpClient::SetTimeout(int seconds)
 {
     m_timeout = seconds;

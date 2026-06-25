@@ -24,6 +24,13 @@ ChatChannelSourceLocal GetChannelSourceLocal(uint32_t type);
 void ProcessBotChatMessage(Player* bot, const std::string& msg, ChatChannelSourceLocal sourceLocal, Channel* channel);
 
 void SaveBotConversationHistoryToDB();
+void AppendBotConversation(uint64_t botGuid, uint64_t playerGuid, const std::string& playerMessage, const std::string& botReply);
+
+// Long-Term Memory (Phase 3)
+std::string GetBotMemoryBlob(uint64_t botGuid, uint64_t playerGuid);
+void SummarizeAndSaveMemory(uint64_t botGuid, uint64_t playerGuid,
+                            std::string botName, std::string playerName,
+                            std::deque<std::pair<std::string, std::string>> historyCopy);
 
 class PlayerBotChatHandler : public PlayerScript
 {

@@ -374,7 +374,22 @@ OllamaChat.TypingSimulationDelayPerChar = 250
 #                  When enabled (1), bots will respond with distinct personalities based on their assigned type.
 #                  When disabled (0), bots will use a neutral/default response style.
 #     Default:     0 (false)
-OllamaChat.EnableRPPersonalities = 0
+OllamaChat.EnableRPPersonalities = 1
+
+# OllamaChat.EnableNamedCharacters
+#     Description: When enabled (1), bots whose character name appears in the NamedCharactersFile
+#                  JSON will receive the matching personality prompt. Takes priority over any
+#                  randomly assigned personality. Requires EnableRPPersonalities = 1.
+#     Default:     1 (true)
+OllamaChat.EnableNamedCharacters = 1
+
+# OllamaChat.NamedCharactersFile
+#     Description: Path to the JSON file that maps character names to personality prompts.
+#                  The file must contain a JSON array of objects with "name" and "prompt" keys.
+#                  Relative paths are resolved from the worldserver working directory.
+#                  See modules/mod-ollama-chat/data/characters.README.md for format details.
+#     Default:     ../../../modules/mod-ollama-chat/data/characters.json
+OllamaChat.NamedCharactersFile = ../../../modules/mod-ollama-chat/data/characters.json
 
 # OllamaChat.DefaultPersonalityPrompt
 #     Description: The fallback personality description used when a bot has no specific roleplay type assigned.
@@ -472,9 +487,17 @@ OllamaChat.SentimentPromptTemplate = "Your relationship sentiment with {player_n
 
 # OllamaChat.ChatPromptTemplate
 #   Description: The main template for bot chat prompts sent to the LLM.
-#   Placeholders (named): {bot_name} {bot_level} {bot_class} {bot_personality} {bot_personality_name} {player_level} {player_class} {player_name} {player_message} {extra_info} {sentiment_info}
-#   Note: {bot_personality_name} contains the name/key of the personality (e.g., "grumpy", "helpful"), while {bot_personality} contains the full personality description text.
-OllamaChat.ChatPromptTemplate = "You're a Wrath-era WoW player familiar with Vanilla and TBC. Name: {bot_name}, Level: {bot_level} {bot_class}, MAKE SURE YOU RESPOND USING YOUR PERSONALITY, WHICH IS: {bot_personality_name}: {bot_personality}. {sentiment_info} {chat_history} A level {player_level} {player_class} named {player_name} said: '{player_message}'. {extra_info} Reply naturally in under 15 words. Use authentic WoW tone. Be blunt if provoked. Be precise if giving directions. Never contradict your class, race, or location. Never act like a narrator—just respond like a player."
+#   Placeholders (named): {bot_name} {bot_level} {bot_class} {bot_personality} {bot_personality_name}
+#                         {player_level} {player_class} {player_name} {player_message}
+#                         {extra_info} {chat_history} {sentiment_info}
+#                         {bot_memory}   -- long-term summary of this player (Phase 3, empty when disabled)
+#                         {bot_journal}  -- autobiographical daily journal digest (ExtendedMemory, empty when disabled)
+#   Note: {bot_personality_name} contains the name/key of the personality (e.g., "grumpy", "helpful"),
+#         while {bot_personality} contains the full personality description text.
+#   Note: {bot_memory} is the wrapped summary from BotMemoryPromptTemplate, or "" when empty/disabled.
+#   Note: {bot_journal} is the wrapped digest from BotJournalPromptTemplate, or "" when empty/disabled.
+#         Add {bot_journal} after {bot_memory} in your active conf to enable journal context.
+OllamaChat.ChatPromptTemplate = "You're a Wrath-era WoW player familiar with Vanilla and TBC. Name: {bot_name}, Level: {bot_level} {bot_class}, MAKE SURE YOU RESPOND USING YOUR PERSONALITY, WHICH IS: {bot_personality_name}: {bot_personality}. {sentiment_info} {bot_memory} {bot_journal} {chat_history} A level {player_level} {player_class} named {player_name} said: '{player_message}'. {extra_info} Reply naturally in under 15 words. Use authentic WoW tone. Be blunt if provoked. Be precise if giving directions. Never contradict your class, race, or location. Never act like a narrator—just respond like a player."
 
 # OllamaChat.ChatExtraInfoTemplate
 #   Description: The context/details string about the bot and player, injected into the chat prompt as the last parameter.
@@ -904,3 +927,211 @@ OllamaChat.RAGSimilarityThreshold = 0.3
 #     Description: Template for including RAG information in bot prompts.
 #     Placeholders (named): {rag_info}
 OllamaChat.RAGPromptTemplate = "RELEVANT INFORMATION:\n{rag_info}\nUse this information to provide accurate and detailed responses when applicable."
+
+# --------------------------------------------
+# NEWSFEED (PHASE 2) - Real-world news in bot chatter
+# --------------------------------------------
+
+# OllamaChat.EnableNewsFeed
+#     Description: When enabled (1), a background thread periodically fetches a news RSS/Atom feed
+#                  and injects a random headline into the random-chatter candidate pool.
+#                  The bot receives the headline in its prompt and formulates a casual in-character comment.
+#                  Disabled by default - turn on only if the server has external network access.
+#     Default:     0 (false)
+OllamaChat.EnableNewsFeed = 0
+
+# OllamaChat.NewsFeedUrl
+#     Description: URL of the RSS or Atom feed to fetch headlines from.
+#                  The parser handles both RSS 2.0 (<item><title>) and Atom (<entry><title>),
+#                  as well as CDATA wrappers and common HTML entities.
+#                  Deutsche Welle RU RSS. Exact URL should be verified with curl before deploy;
+#                  the parser understands both RSS and Atom formats.
+#     Default:     https://rss.dw.com/rdf/rss-ru-all
+OllamaChat.NewsFeedUrl = https://rss.dw.com/rdf/rss-ru-all
+
+# OllamaChat.NewsFeedRefreshInterval
+#     Description: How often (in minutes) to refresh the headline cache from the feed URL.
+#                  The refresh happens in a detached background thread and does not block the worldserver.
+#     Default:     30
+OllamaChat.NewsFeedRefreshInterval = 30
+
+# OllamaChat.NewsFeedMaxItems
+#     Description: Maximum number of headlines to keep in the in-memory cache after each fetch.
+#                  The parser discards the first title (the feed/channel title) automatically.
+#     Default:     20
+OllamaChat.NewsFeedMaxItems = 20
+
+# OllamaChat.NewsFeedDailyTopicCount
+#     Description: How many headlines to randomly select as "topics of the day" from the fetched pool.
+#                  The selection is made once per calendar day and fixed until midnight.
+#                  Bots only discuss these N topics throughout the day (not the full feed).
+#                  Set to 0 to disable daily-topic selection (falls back to full cache - old behaviour).
+#     Default:     5
+OllamaChat.NewsFeedDailyTopicCount = 5
+
+# OllamaChat.NewsFeedCommentChance
+#     Description: Percent chance (0-100) that a news headline is injected into the
+#                  random-chatter candidate pool for a given bot tick.
+#                  This is applied per-bot, inside the existing RandomChatterBotCommentChance gate.
+#                  Example: 10 means roughly 1 in 10 random chatter picks will include a headline.
+#     Default:     10
+OllamaChat.NewsFeedCommentChance = 10
+
+# OllamaChat.NewsFeedCommentTemplate
+#     Description: Template string passed to the LLM as the environment_info when a news headline
+#                  is selected. The bot receives this as part of its random-chatter prompt and
+#                  formulates an in-character reaction.
+#                  Placeholder: {headline}
+#                  NOTE: Use only ASCII '-' and ':' in Russian text (WoW 3.3.5a client lacks
+#                  Unicode minus U+2212, em-dash U+2014, en-dash U+2013).
+#     Default:     Слышал новость: {headline}. Что думаешь об этом?
+OllamaChat.NewsFeedCommentTemplate = Слышал новость: {headline}. Что думаешь об этом?
+
+# OllamaChat.NewsFeedBlockedKeywords
+#     Description: Comma-separated list of keywords (case-insensitive).
+#                  Any headline containing one of these substrings is silently dropped and will
+#                  not be injected into bot chatter. Useful for filtering out undesirable topics.
+#                  Leave empty to allow all headlines.
+#     Example:     OllamaChat.NewsFeedBlockedKeywords = war,bomb,terror
+#     Default:     (empty - no filtering)
+OllamaChat.NewsFeedBlockedKeywords =
+
+# --------------------------------------------
+# EXTENDED DAILY JOURNAL - Autobiographical log for named bots
+# --------------------------------------------
+
+# OllamaChat.EnableExtendedMemory
+#     Description: When enabled (1), a subset of named bots (see ExtendedMemoryBots) keeps an
+#                  autobiographical daily journal of locations visited, events that happened, and
+#                  key conversations. The last few days of the journal are injected into the chat
+#                  prompt via {bot_journal} so the bot "remembers" its recent days.
+#                  Requires the mod_ollama_chat_bot_journal table (written by a parallel migration).
+#     Default:     0 (false)
+OllamaChat.EnableExtendedMemory = 0
+
+# OllamaChat.ExtendedMemoryBots
+#     Description: Comma-separated list of bots that participate in extended memory. Each token is
+#                  either a numeric character GUID (e.g. "568,566") or a character NAME. Numeric
+#                  tokens are matched by GUID (robust for non-ASCII names); name tokens must match
+#                  exactly as in characters.json. OR-combined with ExtendedMemoryGuildId/Name.
+#                  Bots not matched here (and not in the configured guild) are unaffected.
+#     Default:     (empty - no bots)
+OllamaChat.ExtendedMemoryBots =
+
+# OllamaChat.ExtendedMemoryGuildName
+#     Description: Name of a guild whose bot members ALL receive an extended journal, in addition
+#                  to the named bots in ExtendedMemoryBots. Both mechanisms are OR-combined:
+#                  a bot qualifies if it is in ExtendedMemoryBots OR is a member of this guild.
+#                  The guild name is resolved to a guild ID at server startup via CharacterDatabase.
+#                  Leave empty to disable guild-based extended memory.
+#     Default:     (empty - disabled)
+OllamaChat.ExtendedMemoryGuildName =
+
+# OllamaChat.ExtendedMemoryGuildId
+#     Description: Numeric guild ID whose bot members ALL receive an extended journal. Takes
+#                  priority over ExtendedMemoryGuildName (if non-zero, the name is ignored and
+#                  no name->id lookup is done). Useful when the guild name is non-ASCII.
+#                  Find a guild's id with: SELECT guildid, name FROM guild;
+#     Default:     0 (disabled - fall back to ExtendedMemoryGuildName)
+OllamaChat.ExtendedMemoryGuildId = 0
+
+# OllamaChat.ExtendedMemoryRetentionDays
+#     Description: How many calendar days of journal history to keep in memory and DB.
+#                  Older days are pruned on each SaveToDB call.
+#     Default:     7
+OllamaChat.ExtendedMemoryRetentionDays = 7
+
+# OllamaChat.ExtendedMemoryMaxEntriesPerDay
+#     Description: Maximum number of entries per category (locations/events/conversations) per day.
+#                  Once the cap is reached, new entries for that category are silently dropped.
+#     Default:     20
+OllamaChat.ExtendedMemoryMaxEntriesPerDay = 20
+
+# OllamaChat.ExtendedMemoryDaysInPrompt
+#     Description: How many of the most recent days to include in the journal digest injected into
+#                  the LLM prompt. "Сегодня" / "Вчера" / "YYYY-MM-DD" labels are used.
+#     Default:     2
+OllamaChat.ExtendedMemoryDaysInPrompt = 2
+
+# OllamaChat.ExtendedMemorySaveInterval
+#     Description: How often (in minutes) to flush the in-memory journal to DB.
+#                  A final save also runs on server shutdown.
+#     Default:     10
+OllamaChat.ExtendedMemorySaveInterval = 10
+
+# OllamaChat.BotJournalPromptTemplate
+#     Description: Wrapper template injected into the chat prompt when the bot has a non-empty
+#                  journal digest. Placeholder: {journal_digest}.
+#                  The result is passed as {bot_journal} in ChatPromptTemplate.
+#                  When the digest is empty, {bot_journal} receives "".
+#                  NOTE: Use only ASCII '-' and ':' in Russian text (3.3.5a client lacks
+#                  Unicode dashes U+2012/2013/2014).
+#     Default:     Твой дневник за последние дни: {journal_digest}
+OllamaChat.BotJournalPromptTemplate = Твой дневник за последние дни: {journal_digest}
+
+# --------------------------------------------
+# LONG-TERM MEMORY (PHASE 3) - Persistent bot memory per player
+# --------------------------------------------
+
+# OllamaChat.EnableLongTermMemory
+#     Description: When enabled (1), bots accumulate a persistent summary of each player they talk to.
+#                  After every N messages (see MemorySummaryEveryNMessages), the current conversation
+#                  history is summarised asynchronously by the LLM and stored in
+#                  mod_ollama_chat_memory (acore_characters DB). On restart the summary is reloaded
+#                  and injected into the chat prompt via {bot_memory}.
+#                  Requires the mod_ollama_chat_memory table to be present (see pending migration).
+#                  Disabled by default - enable only after applying the SQL migration.
+#     Default:     0 (false)
+OllamaChat.EnableLongTermMemory = 0
+
+# OllamaChat.MemorySummaryEveryNMessages
+#     Description: How many conversation turns (player+bot pairs) must accumulate before a new
+#                  summarisation is triggered for that bot/player pair. The trigger fires when
+#                  the deque size is a multiple of this value.
+#                  Lower values = more frequent summarisation (more LLM calls); higher = less frequent.
+#     Default:     10
+OllamaChat.MemorySummaryEveryNMessages = 10
+
+# OllamaChat.MemorySummaryModel
+#     Description: Optional model override for summarisation calls. If empty, g_OllamaModel is used.
+#                  Set to a faster/smaller model to reduce cost if your main model is large.
+#                  NOTE: Use only ASCII '-' and ':' in Russian config values (3.3.5a client lacks
+#                  Unicode dashes U+2012/2013/2014).
+#     Example:     OllamaChat.MemorySummaryModel = qwen2.5:7b
+#     Default:     (empty - use OllamaChat.Model)
+OllamaChat.MemorySummaryModel =
+
+# OllamaChat.MemorySummaryThinkMode
+#     Description: When enabled (1), the summarisation LLM call uses thinking/reasoning mode
+#                  (sets think:true + hidethinking:true in the Ollama request).
+#                  Produces a higher-quality memory summary at the cost of additional latency.
+#                  Does NOT affect regular chat replies - only the periodic memory summarisation call.
+#                  Requires a thinking-capable model (e.g. qwq, deepseek-r1, gemma3).
+#                  OllamaChat.ThinkModeEnableForModule is ignored for this call when set here.
+#     Default:     0 (off)
+OllamaChat.MemorySummaryThinkMode = 0
+
+# OllamaChat.MemorySummaryNumPredict
+#     Description: Token budget for the summarisation LLM call.
+#                  When MemorySummaryThinkMode = 1, the model consumes tokens for internal reasoning
+#                  before writing the visible summary - leave enough headroom (512+ recommended).
+#                  Set to 0 to use the model default (unlimited).
+#                  Does NOT affect regular chat replies.
+#     Default:     512
+OllamaChat.MemorySummaryNumPredict = 512
+
+# OllamaChat.MemorySummaryPrompt
+#     Description: Prompt sent to the LLM to generate the memory summary.
+#                  Placeholders: {bot_name} {player_name} {history}
+#                  The LLM should output ONLY the summary text (no quotes, no preamble).
+#                  NOTE: Use only ASCII '-' and ':' in Russian text.
+#     Default:     (Russian summarisation prompt - see below)
+OllamaChat.MemorySummaryPrompt = Ниже история общения между {bot_name} и игроком {player_name}. Кратко, в 2-3 предложениях на русском, опиши что {bot_name} помнит об этом игроке: факты, отношения, прошлые события. Выведи ТОЛЬКО текст памяти, без кавычек и пояснений.\n\n{history}
+
+# OllamaChat.BotMemoryPromptTemplate
+#     Description: Wrapper injected into the main chat prompt when a non-empty memory exists.
+#                  Placeholder: {bot_memory} (the summary text from mod_ollama_chat_memory).
+#                  The result is inserted as the {bot_memory} argument in ChatPromptTemplate.
+#                  When memory is empty, {bot_memory} in ChatPromptTemplate receives "".
+#     Default:     "Что ты помнишь об этом игроке: {bot_memory}"
+OllamaChat.BotMemoryPromptTemplate = Что ты помнишь об этом игроке: {bot_memory}

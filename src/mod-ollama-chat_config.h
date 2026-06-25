@@ -6,6 +6,7 @@
 #include <vector>
 #include <deque>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <ctime>
 #include "ScriptMgr.h"  // Ensure WorldScript is defined
@@ -100,6 +101,11 @@ extern std::unordered_map<std::string, std::string> g_PersonalityPrompts;
 extern std::vector<std::string> g_PersonalityKeys;
 extern std::vector<std::string> g_PersonalityKeysRandomOnly; // Personalities that can be randomly assigned
 extern std::string g_DefaultPersonalityPrompt;
+
+// Named-character personalities (loaded from JSON file, name -> personality key)
+extern bool        g_EnableNamedCharacters;
+extern std::string g_NamedCharactersFile;
+extern std::unordered_map<std::string, std::string> g_NamedCharacterByName;
 
 // --------------------------------------------
 // Chat History Templates and Toggles
@@ -279,12 +285,65 @@ extern uint32_t g_TypingSimulationBaseDelay;      // Base delay in milliseconds
 extern uint32_t g_TypingSimulationDelayPerChar;   // Delay per character in milliseconds
 
 // --------------------------------------------
+// NewsFeed (Phase 2)
+// --------------------------------------------
+extern bool        g_EnableNewsFeed;
+extern std::string g_NewsFeedUrl;
+extern uint32_t    g_NewsFeedRefreshInterval;
+extern uint32_t    g_NewsFeedMaxItems;
+extern uint32_t    g_NewsFeedDailyTopicCount;
+extern uint32_t    g_NewsFeedCommentChance;
+extern std::string g_NewsFeedCommentTemplate;
+extern std::vector<std::string> g_NewsFeedBlockedKeywords;
+
+// --------------------------------------------
+// Extended Daily Journal (named bots)
+// --------------------------------------------
+extern bool        g_EnableExtendedMemory;
+extern std::unordered_set<std::string> g_ExtendedMemoryBotsSet;
+extern std::unordered_set<uint32_t> g_ExtendedMemoryBotGuids;
+// Guild-wide extended memory: resolved at startup from g_ExtendedMemoryGuildName.
+// All guild members get journal entries when g_ExtendedMemoryGuildId != 0.
+extern std::string g_ExtendedMemoryGuildName;
+extern uint32_t    g_ExtendedMemoryGuildId;
+extern uint32_t    g_ExtendedMemoryRetentionDays;
+extern uint32_t    g_ExtendedMemoryMaxEntriesPerDay;
+extern uint32_t    g_ExtendedMemoryDaysInPrompt;
+extern uint32_t    g_ExtendedMemorySaveInterval;
+extern std::string g_BotJournalPromptTemplate;
+extern time_t      g_LastJournalSaveTime;
+
+// --------------------------------------------
+// Long-Term Memory (Phase 3)
+// --------------------------------------------
+extern bool        g_EnableLongTermMemory;
+extern uint32_t    g_MemorySummaryEveryNMessages;
+// Override model for memory summarisation; empty = use g_OllamaModel.
+// NOTE: use only ASCII '-' and ':' in Russian config values (3.3.5a client lacks
+//       Unicode dashes U+2012/2013/2014).
+extern std::string g_OllamaMemoryModel;
+extern std::string g_MemorySummaryPrompt;
+extern std::string g_BotMemoryPromptTemplate;
+
+// Enable thinking mode specifically for summarisation calls (does NOT affect chat).
+// 0 = off (default), 1 = on. Produces higher-quality summaries at the cost of speed.
+extern bool        g_MemorySummaryThinkMode;
+// Token budget for summarisation calls. 0 = unlimited. Needs headroom for reasoning + 2-3 sentences.
+extern uint32_t    g_MemorySummaryNumPredict;
+
+// In-memory cache: bot_guid -> player_guid -> summary text.
+extern std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::string>> g_BotMemoryCache;
+extern std::mutex g_BotMemoryMutex;
+
+// --------------------------------------------
 // Loader Functions
 // --------------------------------------------
 void LoadOllamaChatConfig();
 void LoadBotPersonalityList();
 void LoadBotConversationHistoryFromDB();
 void LoadPersonalityTemplatesFromDB();
+void LoadNamedCharactersFromFile();
+void LoadBotMemoryFromDB();
 
 // --------------------------------------------
 // Declaration of the configuration WorldScript.

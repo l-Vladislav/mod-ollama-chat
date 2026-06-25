@@ -7,8 +7,6 @@
 #include <queue>
 #include <thread>
 
-std::string QueryOllamaAPI(const std::string& prompt);
-
 class QueryManager {
 public:
     QueryManager();

@@ -31,6 +31,7 @@
 #include "mod-ollama-chat-utilities.h"
 #include "mod-ollama-chat_sentiment.h"
 #include "mod-ollama-chat_rag.h"
+#include "mod-ollama-chat_journal.h"
 #include <iomanip>
 #include "SpellMgr.h"
 #include "SpellInfo.h"
@@ -249,16 +250,136 @@ bool PlayerBotChatHandler::OnPlayerCanUseChat(Player* player, uint32_t type, uin
     return true;
 }
 
-void AppendBotConversation(uint64_t botGuid, uint64_t playerGuid, const std::string& playerMessage, const std::string& botReply)
+// --------------------------------------------------------------------
+// Long-Term Memory helpers (Phase 3)
+// --------------------------------------------------------------------
+
+std::string GetBotMemoryBlob(uint64_t botGuid, uint64_t playerGuid)
 {
-    std::lock_guard<std::mutex> lock(g_ConversationHistoryMutex);
-    auto& playerHistory = g_BotConversationHistory[botGuid][playerGuid];
-    playerHistory.push_back({ playerMessage, botReply });
-    while (playerHistory.size() > g_MaxConversationHistory)
+    std::lock_guard<std::mutex> lock(g_BotMemoryMutex);
+    auto botIt = g_BotMemoryCache.find(botGuid);
+    if (botIt == g_BotMemoryCache.end())
+        return "";
+    auto playerIt = botIt->second.find(playerGuid);
+    if (playerIt == botIt->second.end())
+        return "";
+    return playerIt->second;
+}
+
+// Runs in a detached background thread — receives data by value to avoid races.
+void SummarizeAndSaveMemory(uint64_t botGuid, uint64_t playerGuid,
+                            std::string botName, std::string playerName,
+                            std::deque<std::pair<std::string, std::string>> historyCopy)
+{
+    // Guard: table may not exist yet
+    QueryResult tableExists = CharacterDatabase.Query(
+        "SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema = DATABASE() "
+        "AND table_name = 'mod_ollama_chat_memory' LIMIT 1");
+    if (!tableExists)
     {
-        playerHistory.pop_front();
+        LOG_WARN("server.loading", "[Ollama Chat Memory] mod_ollama_chat_memory table missing, skipping summarisation.");
+        return;
     }
 
+    // Build {history} block
+    std::ostringstream historyStream;
+    for (const auto& entry : historyCopy)
+    {
+        historyStream << "Игрок: " << entry.first << "\n"
+                      << botName   << ": " << entry.second << "\n";
+    }
+    std::string historyText = historyStream.str();
+
+    // Build summarisation prompt
+    std::string prompt = SafeFormat(g_MemorySummaryPrompt,
+        fmt::arg("bot_name",    botName),
+        fmt::arg("player_name", playerName),
+        fmt::arg("history",     historyText));
+
+    std::string summary = QueryOllamaAPI(prompt, g_OllamaMemoryModel, /*rawResponse=*/true,
+                                         /*thinkMode=*/(g_MemorySummaryThinkMode ? 1 : 0),
+                                         /*numPredictOverride=*/static_cast<int>(g_MemorySummaryNumPredict));
+
+    if (summary.empty())
+    {
+        LOG_WARN("server.loading", "[Ollama Chat Memory] Empty summary for bot {} / player {}, skipping save.",
+                 botGuid, playerGuid);
+        return;
+    }
+
+    // Escape single quotes for SQL
+    std::string escSummary = summary;
+    CharacterDatabase.EscapeString(escSummary);
+
+    CharacterDatabase.Execute(SafeFormat(
+        "REPLACE INTO mod_ollama_chat_memory (bot_guid, player_guid, memory_blob, updated_at) "
+        "VALUES ({}, {}, '{}', NOW())",
+        botGuid, playerGuid, escSummary));
+
+    // Update in-memory cache under mutex
+    {
+        std::lock_guard<std::mutex> lock(g_BotMemoryMutex);
+        g_BotMemoryCache[botGuid][playerGuid] = summary;
+    }
+
+    if (g_DebugEnabled)
+    {
+        LOG_INFO("server.loading", "[Ollama Chat Memory] Saved summary for bot {} / player {}: {}",
+                 botGuid, playerGuid, summary);
+    }
+}
+
+void AppendBotConversation(uint64_t botGuid, uint64_t playerGuid, const std::string& playerMessage, const std::string& botReply)
+{
+    std::deque<std::pair<std::string, std::string>> historyCopy;
+    std::string botName;
+    std::string playerName;
+    bool shouldSummarise = false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_ConversationHistoryMutex);
+        auto& playerHistory = g_BotConversationHistory[botGuid][playerGuid];
+        playerHistory.push_back({ playerMessage, botReply });
+        while (playerHistory.size() > g_MaxConversationHistory)
+        {
+            playerHistory.pop_front();
+        }
+
+        // Check summarisation trigger while still holding the lock
+        if (g_EnableLongTermMemory
+            && g_MemorySummaryEveryNMessages > 0
+            && (playerHistory.size() % g_MemorySummaryEveryNMessages) == 0)
+        {
+            historyCopy  = playerHistory;  // copy by value — safe to use outside lock
+            shouldSummarise = true;
+        }
+    }
+
+    // Resolve names on the main thread (pointers valid here)
+    Player* botPtr    = ObjectAccessor::FindPlayer(ObjectGuid(botGuid));
+    Player* playerPtr = ObjectAccessor::FindPlayer(ObjectGuid(playerGuid));
+    botName    = botPtr    ? botPtr->GetName()    : std::to_string(botGuid);
+    playerName = playerPtr ? playerPtr->GetName() : std::to_string(playerGuid);
+
+    // Extended journal: record conversation snippet
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(botPtr))
+    {
+        // Build a compact snippet: first 60 chars of player message
+        std::string snippet = playerMessage;
+        if (snippet.size() > 60)
+            snippet = snippet.substr(0, 60) + "...";
+        g_BotJournal->RecordConversation(botName,
+            SafeFormat("поговорил с {}: {}", playerName, snippet));
+    }
+
+    if (shouldSummarise)
+    {
+        std::thread(SummarizeAndSaveMemory,
+                    botGuid, playerGuid,
+                    botName, playerName,
+                    std::move(historyCopy)).detach();
+    }
 }
 
 void SaveBotConversationHistoryToDB()
@@ -1854,6 +1975,25 @@ std::string GenerateBotPrompt(Player* bot, std::string playerMessage, Player* pl
     std::string chatHistory         = GetBotHistoryPrompt(botGuid, playerGuid, playerMessage);
     std::string sentimentInfo       = GetSentimentPromptAddition(bot, player);
 
+    // Long-Term Memory (Phase 3)
+    std::string botMemorySection;
+    if (g_EnableLongTermMemory)
+    {
+        std::string mem = GetBotMemoryBlob(botGuid, playerGuid);
+        if (!mem.empty())
+            botMemorySection = SafeFormat(g_BotMemoryPromptTemplate, fmt::arg("bot_memory", mem));
+    }
+
+    // Extended Daily Journal
+    std::string botJournalSection;
+    if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(bot))
+    {
+        std::string digest = g_BotJournal->GetJournalDigest(botName);
+        if (!digest.empty())
+            botJournalSection = SafeFormat(g_BotJournalPromptTemplate,
+                fmt::arg("journal_digest", digest));
+    }
+
     // Retrieve RAG information if enabled
     std::string ragInfo;
     if (g_EnableRAG && g_RAGSystem) {
@@ -1906,7 +2046,9 @@ std::string GenerateBotPrompt(Player* bot, std::string playerMessage, Player* pl
         fmt::arg("player_message", playerMessage),
         fmt::arg("extra_info", extraInfo),
         fmt::arg("chat_history", chatHistory),
-        fmt::arg("sentiment_info", sentimentInfo)
+        fmt::arg("sentiment_info", sentimentInfo),
+        fmt::arg("bot_memory", botMemorySection),
+        fmt::arg("bot_journal", botJournalSection)
     );
 
     // Add RAG information to the prompt if available

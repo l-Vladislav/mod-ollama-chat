@@ -22,11 +22,19 @@ std::string ExtractTextBetweenDoubleQuotes(const std::string& response)
 }
 
 // Function to perform the API call.
-std::string QueryOllamaAPI(const std::string& prompt)
+// modelOverride:      if non-empty, use instead of g_OllamaModel.
+// rawResponse:        if true, skip ExtractTextBetweenDoubleQuotes (needed for summaries).
+// thinkMode:          -1 = use global g_ThinkModeEnableForModule, 0 = force off, 1 = force on.
+// numPredictOverride: -1 = use g_OllamaNumPredict, 0 = unlimited (omit field), >0 = use this value.
+std::string QueryOllamaAPI(const std::string& prompt,
+                           const std::string& modelOverride,
+                           bool rawResponse,
+                           int thinkMode,
+                           int numPredictOverride)
 {
     // Initialize our custom HTTP client
     static OllamaHttpClient httpClient;
-    
+
     if (!httpClient.IsAvailable())
     {
         LOG_ERROR("server.loading", "[OllamaChat] ERROR: HTTP client not available. Check if Ollama service is running and accessible.");
@@ -38,7 +46,7 @@ std::string QueryOllamaAPI(const std::string& prompt)
     }
 
     std::string url   = g_OllamaUrl;
-    std::string model = g_OllamaModel;
+    std::string model = modelOverride.empty() ? g_OllamaModel : modelOverride;
 
     // Sanitize the prompt to ensure it's valid UTF-8 before creating JSON
     std::string sanitizedPrompt = SanitizeUTF8(prompt);
@@ -53,10 +61,16 @@ std::string QueryOllamaAPI(const std::string& prompt)
     nlohmann::json options;
     bool hasOptions = false;
 
-    // Only include if set (do not send defaults if user did not set them)
-    if (g_OllamaNumPredict > 0) {
-        options["num_predict"] = g_OllamaNumPredict;
-        hasOptions = true;
+    // num_predict: use override when provided, otherwise fall back to global config.
+    // numPredictOverride == -1 means "use global"; 0 means unlimited (omit field); >0 means use that value.
+    {
+        uint32_t effNumPredict = (numPredictOverride >= 0)
+            ? static_cast<uint32_t>(numPredictOverride)
+            : g_OllamaNumPredict;
+        if (effNumPredict > 0) {
+            options["num_predict"] = effNumPredict;
+            hasOptions = true;
+        }
     }
     if (g_OllamaTemperature != 0.8f) {
         options["temperature"] = g_OllamaTemperature;
@@ -122,13 +136,18 @@ std::string QueryOllamaAPI(const std::string& prompt)
         requestData["system"] = SanitizeUTF8(g_OllamaSystemPrompt);
     }
 
-    if (g_ThinkModeEnableForModule)
+    // Always send an explicit think flag. Thinking-capable models (e.g. gemma3/4)
+    // default to thinking ON; without this they spend the token budget on internal
+    // reasoning and return an empty response. Non-thinking models ignore think:false.
+    // thinkMode: -1 = follow global g_ThinkModeEnableForModule, 0 = force off, 1 = force on.
+    bool think = (thinkMode == -1) ? g_ThinkModeEnableForModule : (thinkMode == 1);
+    requestData["think"] = think;
+    if (think)
     {
         if(g_DebugEnabled)
         {
             LOG_INFO("server.loading", "[Ollama Chat] LLM set to Think mode.");
         }
-        requestData["think"] = true;
         requestData["hidethinking"] = true;
     }
 
@@ -178,7 +197,9 @@ std::string QueryOllamaAPI(const std::string& prompt)
 
     std::string botReply = extractedResponse.str();
 
-    botReply = ExtractTextBetweenDoubleQuotes(botReply);
+    // For summarisation calls we need the full multi-sentence output; skip quote extraction.
+    if (!rawResponse)
+        botReply = ExtractTextBetweenDoubleQuotes(botReply);
 
     // Check for unclosed think tags
     if (botReply.find("<think>") != std::string::npos || botReply.find("</think>") != std::string::npos)
@@ -208,12 +229,9 @@ std::string QueryOllamaAPI(const std::string& prompt)
     {
         LOG_INFO("server.loading", "[Ollama Chat] Parsed bot response: {}", botReply);
 
-        if (g_ThinkModeEnableForModule)
+        if (think)
         {
-            if(g_DebugEnabled)
-            {
-                LOG_INFO("server.loading", "[Ollama Chat] Bot used think.");
-            }
+            LOG_INFO("server.loading", "[Ollama Chat] Bot used think.");
         }
     }
 
