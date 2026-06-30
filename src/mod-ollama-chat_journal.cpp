@@ -41,7 +41,11 @@ std::string OllamaBotJournal::SerialiseJournal(const std::map<std::string, DayJo
         dayObj["conversations"] = dj.conversations;
         root[day] = dayObj;
     }
-    return root.dump();
+    // Use the "replace" error handler so a stray invalid UTF-8 byte (e.g.
+    // from legacy data) is replaced with U+FFFD instead of throwing a
+    // type_error.316 — an unhandled throw here aborts the whole worldserver.
+    return root.dump(-1, ' ', false,
+                     nlohmann::json::error_handler_t::replace);
 }
 
 std::map<std::string, DayJournal> OllamaBotJournal::DeserialiseJournal(const std::string& json)
@@ -107,7 +111,8 @@ void OllamaBotJournal::RecordEvent(const std::string& botName, const std::string
     if (g_ExtendedMemoryMaxEntriesPerDay > 0 &&
         dj.events.size() >= static_cast<size_t>(g_ExtendedMemoryMaxEntriesPerDay))
         return;
-    dj.events.push_back(text);
+    // Sanitize on entry so the journal can always be serialised to JSON.
+    dj.events.push_back(SanitizeUTF8(text));
 }
 
 void OllamaBotJournal::RecordLocation(const std::string& botName, const std::string& zone)
@@ -115,15 +120,16 @@ void OllamaBotJournal::RecordLocation(const std::string& botName, const std::str
     if (!g_EnableExtendedMemory || zone.empty())
         return;
 
+    std::string safeZone = SanitizeUTF8(zone);
     std::lock_guard<std::mutex> lock(m_mutex);
     auto& dj = m_journals[botName][TodayString()];
     if (g_ExtendedMemoryMaxEntriesPerDay > 0 &&
         dj.locations.size() >= static_cast<size_t>(g_ExtendedMemoryMaxEntriesPerDay))
         return;
     // Dedup consecutive identical zones
-    if (!dj.locations.empty() && dj.locations.back() == zone)
+    if (!dj.locations.empty() && dj.locations.back() == safeZone)
         return;
-    dj.locations.push_back(zone);
+    dj.locations.push_back(safeZone);
 }
 
 void OllamaBotJournal::RecordConversation(const std::string& botName, const std::string& text)
@@ -136,7 +142,8 @@ void OllamaBotJournal::RecordConversation(const std::string& botName, const std:
     if (g_ExtendedMemoryMaxEntriesPerDay > 0 &&
         dj.conversations.size() >= static_cast<size_t>(g_ExtendedMemoryMaxEntriesPerDay))
         return;
-    dj.conversations.push_back(text);
+    // Sanitize on entry so the journal can always be serialised to JSON.
+    dj.conversations.push_back(SanitizeUTF8(text));
 }
 
 std::string OllamaBotJournal::GetJournalDigest(const std::string& botName)

@@ -151,7 +151,10 @@ std::string QueryOllamaAPI(const std::string& prompt,
         requestData["hidethinking"] = true;
     }
 
-    std::string requestDataStr = requestData.dump();
+    // "replace" handler: never throw on invalid UTF-8 in the prompt — an
+    // unhandled type_error.316 here would abort the worldserver.
+    std::string requestDataStr = requestData.dump(-1, ' ', false,
+                     nlohmann::json::error_handler_t::replace);
 
     // Make HTTP POST request using our custom client
     std::string responseBuffer = httpClient.Post(url, requestDataStr);

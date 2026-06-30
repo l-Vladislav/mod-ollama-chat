@@ -366,10 +366,14 @@ void AppendBotConversation(uint64_t botGuid, uint64_t playerGuid, const std::str
     // Extended journal: record conversation snippet
     if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(botPtr))
     {
-        // Build a compact snippet: first 60 chars of player message
+        // Build a compact snippet: first ~60 bytes of player message.
+        // substr() cuts on a byte boundary, which can split a multi-byte
+        // UTF-8 character (e.g. Cyrillic) and leave a dangling lead byte;
+        // SanitizeUTF8 strips any such partial sequence so the snippet is
+        // always valid UTF-8 before it reaches the journal / JSON.
         std::string snippet = playerMessage;
         if (snippet.size() > 60)
-            snippet = snippet.substr(0, 60) + "...";
+            snippet = SanitizeUTF8(snippet.substr(0, 60)) + "...";
         g_BotJournal->RecordConversation(botName,
             SafeFormat("поговорил с {}: {}", playerName, snippet));
     }
