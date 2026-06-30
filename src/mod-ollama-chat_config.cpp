@@ -271,6 +271,18 @@ int g_GuildEventTypeDungeonComplete_Chance = 0;
 uint32_t g_EventCooldownTime = 10;
 
 // --------------------------------------------
+// Tool-Calling (function-calling) Support
+// --------------------------------------------
+bool        g_EnableToolCalling    = false;
+uint32_t    g_MaxToolRounds        = 3;
+std::string g_OllamaChatUrl        = "";
+bool        g_EnableSelfStateTools = true;
+bool        g_EnableWowheadTool    = true;
+std::string g_WowheadSearchUrl     = "https://www.wowhead.com/wotlk/search?q=";
+uint32_t    g_ToolResultMaxChars   = 800;
+std::string g_ToolSystemPrompt     = "У тебя ЕСТЬ инструменты для получения НАСТОЯЩИХ данных. Когда игрок спрашивает где ты находишься, что у тебя в сумках или надето, какой у тебя уровень, здоровье, золото или цель - ТЫ ОБЯЗАН вызвать get_self_status или get_inventory и отвечать СТРОГО по их результату. Про предметы, НПС, заклинания или механику игры - вызови wowhead_lookup. НИКОГДА не выдумывай эти факты и не отвечай по памяти, если есть инструмент.";
+
+// --------------------------------------------
 // Channel Disable Settings
 // --------------------------------------------
 bool g_DisableForCustomChannels = false;
@@ -651,6 +663,25 @@ void LoadOllamaChatConfig()
         {
             g_BlacklistCommands.push_back(cmd);
         }
+    }
+
+    // Tool-Calling (function-calling)
+    g_EnableToolCalling    = sConfigMgr->GetOption<bool>("OllamaChat.EnableToolCalling", false);
+    g_MaxToolRounds        = sConfigMgr->GetOption<uint32_t>("OllamaChat.MaxToolRounds", 3);
+    g_OllamaChatUrl        = sConfigMgr->GetOption<std::string>("OllamaChat.ChatUrl", "");
+    g_EnableSelfStateTools = sConfigMgr->GetOption<bool>("OllamaChat.EnableSelfStateTools", true);
+    g_EnableWowheadTool    = sConfigMgr->GetOption<bool>("OllamaChat.EnableWowheadTool", true);
+    g_WowheadSearchUrl     = sConfigMgr->GetOption<std::string>("OllamaChat.WowheadSearchUrl", "https://www.wowhead.com/wotlk/search?q=");
+    g_ToolResultMaxChars   = sConfigMgr->GetOption<uint32_t>("OllamaChat.ToolResultMaxChars", 800);
+    g_ToolSystemPrompt     = sConfigMgr->GetOption<std::string>("OllamaChat.ToolSystemPrompt", "У тебя ЕСТЬ инструменты для получения НАСТОЯЩИХ данных. Когда игрок спрашивает где ты находишься, что у тебя в сумках или надето, какой у тебя уровень, здоровье, золото или цель - ТЫ ОБЯЗАН вызвать get_self_status или get_inventory и отвечать СТРОГО по их результату. Про предметы, НПС, заклинания или механику игры - вызови wowhead_lookup. НИКОГДА не выдумывай эти факты и не отвечай по памяти, если есть инструмент.");
+
+    if (g_EnableToolCalling)
+    {
+        LOG_INFO("server.loading", "[OllamaChat] Tool-calling ENABLED. MaxRounds={}, SelfState={}, Wowhead={}, ChatUrl='{}'",
+            g_MaxToolRounds,
+            g_EnableSelfStateTools ? "on" : "off",
+            g_EnableWowheadTool    ? "on" : "off",
+            g_OllamaChatUrl.empty() ? "(derived from Url)" : g_OllamaChatUrl);
     }
 
     LoadPersonalityTemplatesFromDB();

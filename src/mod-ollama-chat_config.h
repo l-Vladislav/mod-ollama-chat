@@ -336,6 +336,18 @@ extern std::unordered_map<uint64_t, std::unordered_map<uint64_t, std::string>> g
 extern std::mutex g_BotMemoryMutex;
 
 // --------------------------------------------
+// Tool-Calling (function-calling) Support
+// --------------------------------------------
+extern bool        g_EnableToolCalling;
+extern uint32_t    g_MaxToolRounds;
+extern std::string g_OllamaChatUrl;
+extern bool        g_EnableSelfStateTools;
+extern bool        g_EnableWowheadTool;
+extern std::string g_WowheadSearchUrl;
+extern uint32_t    g_ToolResultMaxChars;
+extern std::string g_ToolSystemPrompt;
+
+// --------------------------------------------
 // Loader Functions
 // --------------------------------------------
 void LoadOllamaChatConfig();

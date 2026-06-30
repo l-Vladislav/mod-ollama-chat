@@ -43,6 +43,7 @@
 #include "TravelNode.h"
 #include "ObjectMgr.h"
 #include "QuestDef.h"
+#include "mod-ollama-chat_tools.h"
 
 // For AzerothCore range checks
 #include "GridNotifiersImpl.h"
@@ -1531,16 +1532,30 @@ void PlayerBotChatHandler::ProcessChat(Player* player, uint32_t /*type*/, uint32
         }
         std::string prompt = GenerateBotPrompt(bot, msg, player);
         uint64_t botGuid = bot->GetGUID().GetRawValue();
-        
-        std::thread([botGuid, senderGuid, prompt, sourceLocal, channelId = (channel ? channel->GetChannelId() : 0), channelName = (channel ? channel->GetName() : ""), msg]() {
+
+        // Snapshot bot self-state on the world-thread before entering the
+        // background thread.  Required for thread-safe tool-calling: the
+        // background thread must never dereference Player* objects.
+        BotSelfSnapshot botSnap;
+        if (g_EnableToolCalling)
+            botSnap = SnapshotBotSelf(bot);
+
+        std::thread([botGuid, senderGuid, prompt, botSnap, sourceLocal, channelId = (channel ? channel->GetChannelId() : 0), channelName = (channel ? channel->GetName() : ""), msg]() {
             try {
-                // Use the QueryManager to submit the query.
-                auto responseFuture = SubmitQuery(prompt);
-                if (!responseFuture.valid())
+                // Use the QueryManager for the legacy /api/generate path, or the
+                // tool-calling /api/chat path when g_EnableToolCalling is true.
+                std::string response;
+                if (g_EnableToolCalling)
                 {
-                    return;
+                    response = QueryOllamaChatWithTools(prompt, botSnap);
                 }
-                std::string response = responseFuture.get();
+                else
+                {
+                    auto responseFuture = SubmitQuery(prompt);
+                    if (!responseFuture.valid())
+                        return;
+                    response = responseFuture.get();
+                }
 
                 // Reacquire pointers by GUID.
                 Player* botPtr = ObjectAccessor::FindPlayer(ObjectGuid(botGuid));

@@ -1135,3 +1135,69 @@ OllamaChat.MemorySummaryPrompt = Ниже история общения межд
 #                  When memory is empty, {bot_memory} in ChatPromptTemplate receives "".
 #     Default:     "Что ты помнишь об этом игроке: {bot_memory}"
 OllamaChat.BotMemoryPromptTemplate = Что ты помнишь об этом игроке: {bot_memory}
+
+# --------------------------------------------
+# TOOL-CALLING (FUNCTION-CALLING) SUPPORT
+# Enables gemma4 / other function-calling models to call in-game tools
+# when answering player messages.  Uses Ollama /api/chat + tools endpoint.
+# STRICTLY ADDITIVE: when disabled (default), all chat routes to
+# /api/generate as before.  Random-chatter and event-chatter are
+# NEVER routed through tool-calling regardless of this flag.
+# --------------------------------------------
+
+# OllamaChat.EnableToolCalling
+#     Description: When enabled (1), player->bot replies are sent to the
+#                  Ollama /api/chat endpoint with a tool registry.  The model
+#                  may call tools (get_self_status, get_inventory, wowhead_lookup)
+#                  to answer questions about the bot's real in-game state.
+#                  When disabled (0, default), the legacy /api/generate path
+#                  is used unchanged.
+#     Default:     0 (false)
+OllamaChat.EnableToolCalling = 0
+
+# OllamaChat.MaxToolRounds
+#     Description: Maximum number of tool-call rounds per player message.
+#                  Each round is one POST to /api/chat.  On the last round,
+#                  tools are omitted to force a final text reply.
+#                  Increasing this allows more chained lookups but adds latency.
+#     Default:     3
+OllamaChat.MaxToolRounds = 3
+
+# OllamaChat.ChatUrl
+#     Description: Override URL for the /api/chat endpoint.
+#                  Leave empty (default) to auto-derive from OllamaChat.Url by
+#                  replacing /api/generate with /api/chat.
+#                  Useful if the chat endpoint is on a different host/port.
+#     Default:     (empty - derived from OllamaChat.Url)
+OllamaChat.ChatUrl =
+
+# OllamaChat.EnableSelfStateTools
+#     Description: When enabled (1), the tool registry includes get_self_status
+#                  and get_inventory, which give the model real-time bot
+#                  position, vitals, equipment, and bag contents.
+#                  Only active when OllamaChat.EnableToolCalling = 1.
+#     Default:     1 (true)
+OllamaChat.EnableSelfStateTools = 1
+
+# OllamaChat.EnableWowheadTool
+#     Description: When enabled (1), the tool registry includes wowhead_lookup,
+#                  which lets the model search wowhead.com/wotlk for game data.
+#                  Requires outbound HTTPS access from the worldserver host.
+#                  Best-effort: Cloudflare may block the request; the tool
+#                  degrades gracefully with an informative fallback message.
+#                  Only active when OllamaChat.EnableToolCalling = 1.
+#     Default:     1 (true)
+OllamaChat.EnableWowheadTool = 1
+
+# OllamaChat.WowheadSearchUrl
+#     Description: Base URL for WoWHead searches. The tool appends the
+#                  URL-encoded query string to this value.
+#     Default:     https://www.wowhead.com/wotlk/search?q=
+OllamaChat.WowheadSearchUrl = https://www.wowhead.com/wotlk/search?q=
+
+# OllamaChat.ToolResultMaxChars
+#     Description: Maximum character length of a single tool result returned
+#                  to the model.  Results exceeding this limit are truncated
+#                  (UTF-8 boundary-safe) to avoid bloating the context window.
+#     Default:     800
+OllamaChat.ToolResultMaxChars = 800
