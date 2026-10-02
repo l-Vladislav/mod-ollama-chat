@@ -1,4 +1,5 @@
 #include "mod-ollama-chat_querymanager.h"
+#include "mod-ollama-chat_api.h"     // For QueryOllamaAPI
 #include "mod-ollama-chat_config.h"  // For g_MaxConcurrentQueries
 #include <thread>
 

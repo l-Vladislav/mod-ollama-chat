@@ -11,7 +11,10 @@ public:
 
     // Make HTTP POST request to Ollama API
     std::string Post(const std::string& url, const std::string& jsonData);
-    
+
+    // Make HTTP GET request (RSS/news feeds, etc.)
+    std::string Get(const std::string& url);
+
     // Set timeout for requests (in seconds)
     void SetTimeout(int seconds);
     
