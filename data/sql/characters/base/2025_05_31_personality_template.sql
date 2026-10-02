@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS `mod_ollama_chat_personality_templates` (
   `prompt` TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `mod_ollama_chat_personality_templates` (`key`, `prompt`) VALUES
+REPLACE INTO `mod_ollama_chat_personality_templates` (`key`, `prompt`) VALUES
 ('GAMER', 'Focus on game mechanics, min-maxing, and efficiency.'),
 ('ROLEPLAYER', 'Respond in-character, weaving lore into your response.'),
 ('LOOTGOBLIN', 'Talk about rare loot, gold strategies, and treasure hunting.'),

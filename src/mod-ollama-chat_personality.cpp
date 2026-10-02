@@ -12,6 +12,21 @@ std::string GetBotPersonality(Player* bot)
 {
     uint64_t botGuid = bot->GetGUID().GetRawValue();
 
+    // Named-character lookup: highest priority, overrides any previously assigned personality
+    if (g_EnableRPPersonalities && g_EnableNamedCharacters)
+    {
+        auto namedIt = g_NamedCharacterByName.find(bot->GetName());
+        if (namedIt != g_NamedCharacterByName.end())
+        {
+            g_BotPersonalityList[botGuid] = namedIt->second;
+            if (g_DebugEnabled)
+            {
+                LOG_INFO("server.loading", "[Ollama Chat] Using named personality '{}' for bot {}", namedIt->second, bot->GetName());
+            }
+            return namedIt->second;
+        }
+    }
+
     // If personality already assigned, return it (but only if RP personalities are enabled)
     auto it = g_BotPersonalityList.find(botGuid);
     if (it != g_BotPersonalityList.end())
@@ -63,7 +78,7 @@ std::string GetBotPersonality(Player* bot)
 
     // Save to database if schema supports string (recommend TEXT or VARCHAR column for personality)
     QueryResult tableExists = CharacterDatabase.Query(
-        "SELECT * FROM information_schema.tables WHERE table_schema = 'acore_characters' AND table_name = 'mod_ollama_chat_personality' LIMIT 1;");
+        "SELECT * FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'mod_ollama_chat_personality' LIMIT 1;");
     if (!tableExists)
     {
         LOG_INFO("server.loading", "[Ollama Chat] Please source the required database table first");

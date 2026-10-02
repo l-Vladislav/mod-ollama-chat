@@ -2,6 +2,8 @@
 #include "mod-ollama-chat_config.h"
 #include "mod-ollama-chat_handler.h"
 #include "mod-ollama-chat_sentiment.h"
+#include "mod-ollama-chat_newsfeed.h"
+#include "mod-ollama-chat_journal.h"
 #include "Log.h"
 #include "Player.h"
 #include "PlayerbotAI.h"
@@ -60,6 +62,17 @@ void OllamaBotRandomChatter::OnUpdate(uint32 diff)
         }
     }
 
+    // Save journal periodically
+    if (g_EnableExtendedMemory && g_BotJournal && g_ExtendedMemorySaveInterval > 0)
+    {
+        time_t now = time(nullptr);
+        if (difftime(now, g_LastJournalSaveTime) >= g_ExtendedMemorySaveInterval * 60)
+        {
+            g_BotJournal->SaveToDB();
+            g_LastJournalSaveTime = now;
+        }
+    }
+
     if (!g_EnableRandomChatter)
         return;
 
@@ -89,6 +102,10 @@ void OllamaBotRandomChatter::HandleRandomChatter()
         if (!PlayerbotsMgr::instance().GetPlayerbotAI(player))
             realPlayers.push_back(player);
     }
+
+    // NewsFeed staleness check — trigger a background refresh if the cache is expired
+    if (g_EnableNewsFeed && g_NewsFeedManager && g_NewsFeedManager->IsStale())
+        g_NewsFeedManager->FetchNewsAsync();
 
     std::unordered_set<uint64_t> processedBotsThisTick;
 
@@ -138,6 +155,21 @@ void OllamaBotRandomChatter::HandleRandomChatter()
 
         uint64_t guid = bot->GetGUID().GetRawValue();
         processedBotsThisTick.insert(guid);
+
+            // Record location for extended-memory bots
+            if (g_EnableExtendedMemory && g_BotJournal && g_BotJournal->IsExtendedBotPlayer(bot))
+            {
+                PlayerbotAI* journalAI = PlayerbotsMgr::instance().GetPlayerbotAI(bot);
+                if (journalAI)
+                {
+                    AreaTableEntry const* zoneEntry = journalAI->GetCurrentZone();
+                    if (zoneEntry)
+                    {
+                        std::string zoneName = journalAI->GetLocalizedAreaName(zoneEntry);
+                        g_BotJournal->RecordLocation(bot->GetName(), zoneName);
+                    }
+                }
+            }
 
             time_t now = time(nullptr);
 
@@ -417,6 +449,17 @@ void OllamaBotRandomChatter::HandleRandomChatter()
                 {
                     uint32_t uIdx = unfinished.size() == 1 ? 0 : urand(0, unfinished.size() - 1);
                     candidateComments.push_back(unfinished[uIdx]);
+                }
+            }
+
+            // World news (Phase 2 - NewsFeed)
+            if (g_EnableNewsFeed && g_NewsFeedManager && urand(0, 99) < g_NewsFeedCommentChance)
+            {
+                std::string headline = g_NewsFeedManager->GetRandomHeadline();
+                if (!headline.empty() && !IsHeadlineBlocked(headline))
+                {
+                    candidateComments.push_back(SafeFormat(g_NewsFeedCommentTemplate,
+                        fmt::arg("headline", headline)));
                 }
             }
 

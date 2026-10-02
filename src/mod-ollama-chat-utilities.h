@@ -2,7 +2,7 @@
 #define MOD_OLLAMA_CHAT_UTILS_H
 
 #include <string>
-#include <fmt/format.h>
+#include <fmt/core.h>
 #include "Log.h"
 #include <vector>
 #include <sstream>
@@ -12,7 +12,9 @@
 template<typename... Args>
 inline std::string SafeFormat(const std::string& templ, Args&&... args) {
     try {
-        return fmt::vformat(templ, fmt::make_format_args(args...));
+        // fmt >= 10 requires a compile-time format string; templ is runtime data
+        // (module config / DB text), so it has to go through fmt::runtime().
+        return fmt::format(fmt::runtime(templ), std::forward<Args>(args)...);
     } catch (const fmt::format_error& e) {
         LOG_ERROR("server.loading", "[Ollama Chat] Format error: {} | Template: {}", e.what(), templ);
         return "[Format Error]";
